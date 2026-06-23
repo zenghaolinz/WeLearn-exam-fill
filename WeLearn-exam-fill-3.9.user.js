@@ -752,21 +752,21 @@
 
                 <div class="panel">
                     <div class="header" id="dragHeader">
-                        <h3>📋 WeLearn 试卷回填助手</h3>
+                        <h3>WeLearn 试卷回填助手</h3>
                         <button class="toggle-btn" id="minimizeBtn" type="button">−</button>
                     </div>
                     <div class="body" id="body">
                         <div class="status"><span class="dot" id="statusDot"></span><span id="statusText">待机</span></div>
 
-                        <div class="section-title">🎯 试卷提取与回填</div>
-                        <div class="hint">以 .test_hov 为题容器提取全卷（选择+填空+翻译），AI 分析后自动回填。<b>不会自动提交</b>，请核对后自行交卷。回填直接调用平台 autoSaveAnswer，稳定触发答题卡变绿与保存。先点“🔄 重新提取”确认题目数。</div>
+                        <div class="section-title">试卷提取与回填</div>
+                        <div class="hint">以 .test_hov 为题容器提取全卷（选择+填空+翻译），AI 分析后自动回填。<b>不会自动提交</b>，请核对后自行交卷。回填直接调用平台 autoSaveAnswer，稳定触发答题卡变绿与保存。先点“重新提取”确认题目数。</div>
                         <div class="btn-row">
-                            <button class="btn-main" id="analyzeBtn" type="button">✨ 分析并回填全部</button>
-                            <button class="btn-autofill" id="autoFillBtn" type="button">🤖 自动回填：开</button>
+                            <button class="btn-main" id="analyzeBtn" type="button">分析并回填全部</button>
+                            <button class="btn-autofill" id="autoFillBtn" type="button">自动回填：开</button>
                         </div>
                         <div class="btn-row" style="margin-top:8px;">
-                            <button class="btn-ghost" id="copyPageTextBtn" type="button">📋 复制识别题目</button>
-                            <button class="btn-ghost" id="refreshBtn" type="button">🔄 重新提取</button>
+                            <button class="btn-ghost" id="copyPageTextBtn" type="button">复制识别题目</button>
+                            <button class="btn-ghost" id="refreshBtn" type="button">重新提取</button>
                         </div>
 
                         <div class="section-title">API 设置</div>
@@ -778,8 +778,8 @@
                             <label>Model</label>
                             <input id="modelInput" data-paste-safe="1" placeholder="deepseek-v4-flash">
                             <div class="btn-row">
-                                <button class="btn-save" id="saveBtn" type="button">💾 保存配置</button>
-                                <button class="btn-test" id="testBtn" type="button">🔌 测试连接</button>
+                                <button class="btn-save" id="saveBtn" type="button">保存配置</button>
+                                <button class="btn-test" id="testBtn" type="button">测试连接</button>
                             </div>
                         </div>
 
@@ -817,9 +817,9 @@
         }
 
         updateAutoFillButton(enabled) {
-            this.autoFillBtn.textContent = enabled ? '🤖 自动回填：开' : '🤖 自动回填：关';
+            this.autoFillBtn.textContent = enabled ? '自动回填：开' : '自动回填：关';
             this.autoFillBtn.classList.toggle('on', enabled);
-            this.analyzeBtn.textContent = enabled ? '✨ 分析并回填全部' : '✨ 仅分析全部';
+            this.analyzeBtn.textContent = enabled ? '分析并回填全部' : '仅分析全部';
         }
 
         loadSettingsToForm() {
