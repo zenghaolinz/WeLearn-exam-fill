@@ -1,0 +1,19 @@
+# 系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 日志/临时
+*.log
+*.tmp
+*.bak
+
+# 不要把 API Key 之类敏感信息提交（本仓库脚本不含明文 Key，Key 走 GM_setValue）
+*.env
+.env
