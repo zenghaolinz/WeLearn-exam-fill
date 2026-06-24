@@ -2,7 +2,7 @@
 
 一个适配 [WE Test 智能测试系统](https://wetest.sflep.com/test/welearnTest.html)（wetest.sflep.com）的 Tampermonkey 油猴脚本。自动提取全卷题目（选择 + 填空 + 翻译），调用 AI 分析作答后回填，并稳定触发答题卡变绿与服务端保存。**不会自动提交**，请核对后自行交卷。
 
-当前版本：`3.10-exam-fill`
+当前版本：`3.11-exam-fill`
 
 ## 功能特性
 
@@ -18,7 +18,7 @@
 ## 安装
 
 1. 安装 [Tampermonkey](https://www.tampermonkey.net/)（Chrome / Edge / Firefox 均可）。
-2. 新建脚本，将 `WeLearn-exam-fill-3.10.user.js` 的全部内容粘贴进去，保存。
+2. 新建脚本，将 `WeLearn-exam-fill-3.11.user.js` 的全部内容粘贴进去，保存。
    - **重要**：请用文本编辑器（VSCode / 记事本）打开文件后 `Ctrl+A` 全选复制，**不要从网页预览框复制**——预览框会插入"预览已截断"占位文本，导致脚本语法错误无法加载。
 3. 打开试卷页 `https://wetest.sflep.com/test/welearnTest.html*`，右上角出现悬浮面板即安装成功。
 
@@ -67,13 +67,15 @@ $('textarea:not([id="txtLogInfo"])').each(function(){
 
 **partNum 修复**：`directSaveAnswer` 的保存请求用题目所属 Part 号（`collectAllQuestions` 时从 `.partDiv` 容器 id 解析记录），而非全局 `curPartNum`。平台服务端按 `partNum` 归档答案——若翻译题在 Part 3 但 `curPartNum=1`，请求带 `partNum=1` 会被拒收，表现为"前端变绿但服务端没存，刷新就没了"。用题目自身 Part 号后即稳定保存。
 
+**SelPart 切换修复**：仅给请求带正确 `partNum` 还不够——服务端保存还要求题目所在 Part 当前可见（`curPartNum` 已更新 + `.partDiv` 已 show）。实测：停在 Part 1 回填 Part 3 翻译题、或在 Part 3 回填 Part 2 填空题，都会"绿了但不保存"；只有当前可见 Part 的题能保存。因此回填每题前先 `ensurePart(q.partNum)` → `SelPart(partNum)` 真正切过去，让保存走平台期望的完整路径。
+
 实测：手动同步连调多道翻译题可全部变绿；脚本批量回填经 `directSaveAnswer` 后翻译题不再"每次只绿一道"。
 
 ## 文件结构
 
 ```
 WeLearnScripts/
-├── WeLearn-exam-fill-3.10.user.js   # 主脚本
+├── WeLearn-exam-fill-3.11.user.js   # 主脚本
 └── README.md
 ```
 

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         WeLearn 试卷分析与自动回填助手
 // @namespace    http://tampermonkey.net/
-// @version      3.10-exam-fill
-// @description  适配 wetest.sflep.com：以 .test_hov 为题容器提取全卷（选择+填空+翻译），AI 分析后回填。directSaveAnswer 绕开 isLeave 拦截 + 用题目所属 partNum 保存（修"绿了但不保存、刷新就没了"：服务端按 partNum 归档，翻译题在 Part 3 但 curPartNum=1 时请求被拒收）。
+// @version      3.11-exam-fill
+// @description  适配 wetest.sflep.com：以 .test_hov 为题容器提取全卷（选择+填空+翻译），AI 分析后回填。回填每题前先 SelPart 切到该题所属 Part（服务端保存要求 Part 可见且 curPartNum 已更新；停在 Part 1 回填 Part 3 翻译题会"绿了但不保存"）。
 // @match        https://wetest.sflep.com/test/welearnTest.html*
 // @match        https://wetest.sflep.com/*
 // @grant        GM_xmlhttpRequest
@@ -20,7 +20,7 @@
     const APP = Object.freeze({
         id: 'wl-exam-fill-helper',
         name: 'WeLearn 试卷分析与自动回填助手',
-        version: '3.10-exam-fill',
+        version: '3.11-exam-fill',
         settingsKey: 'WL_EXAM_SETTINGS',
         apiKeyKey: 'WL_EXAM_API_KEY',
         autoFillKey: 'WL_EXAM_AUTOFILL'
@@ -196,6 +196,18 @@
                 }
             } finally {
                 if (!wasFilling) suppressIsLeave(false);
+            }
+        } catch (_) { /* ignore */ }
+    }
+
+    // 切换到指定 Part（若与当前不同），并等待其 DOM 显示。
+    // 关键发现：服务端保存不只看请求里的 partNum，还要求题目所在 Part 当前可见
+    // （curPartNum 已更新 + .partDiv 已 show）。停在 Part 1 回填 Part 3 的翻译题会
+    // "绿了但不保存"——必须真正 SelPart 切过去。SelPart 内部会更新 curPartNum、hide/show。
+    function ensurePart(partNum) {
+        try {
+            if (partNum && typeof window.SelPart === 'function' && window.curPartNum !== partNum) {
+                window.SelPart(partNum);
             }
         } catch (_) { /* ignore */ }
     }
@@ -626,6 +638,7 @@
                     const optText = q.options[a.answer_index] || '';
                     summary.push(`题${q.no} [选择] → ${optText}${a.reason ? `  (${a.reason})` : ''}`);
                     if (this.autoFillEnabled) {
+                        ensurePart(q.partNum);                 // 切到该题所在 Part，保证服务端保存生效
                         fillChoice(q.optionEls[a.answer_index], q.partNum);
                         filledChoice++;
                     }
@@ -651,6 +664,7 @@
                             summary.push(`题${q.no} [填空] → ${ans || 'AI 未给出'}`);
                             if (this.autoFillEnabled && ans) {
                                 this.ui.setStatus(`回填填空题 ${i + 1}/${pendingFill.length}（题${q.no}）...`, true);
+                                ensurePart(q.partNum);                 // 切到该题所在 Part，保证服务端保存生效
                                 await fillText(q.inputEl, ans, q.partNum);   // 带题目所属 partNum 保存
                                 await sleep(220);                  // 题间延时，让保存请求排队
                                 filledFill++;
@@ -678,6 +692,7 @@
                             summary.push(`题${q.no} [翻译] → ${ans.slice(0, 50)}${ans.length > 50 ? '...' : ''}`);
                             if (this.autoFillEnabled && ans) {
                                 this.ui.setStatus(`回填翻译题 ${i + 1}/${pendingTrans.length}（题${q.no}）...`, true);
+                                ensurePart(q.partNum);                 // 切到该题所在 Part，保证服务端保存生效
                                 await fillText(q.inputEl, ans, q.partNum);
                                 await sleep(280);
                                 filledTrans++;
