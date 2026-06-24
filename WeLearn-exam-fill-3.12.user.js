@@ -1,14 +1,15 @@
 // ==UserScript==
 // @name         WeLearn 试卷分析与自动回填助手
 // @namespace    http://tampermonkey.net/
-// @version      3.11-exam-fill
-// @description  适配 wetest.sflep.com：以 .test_hov 为题容器提取全卷（选择+填空+翻译），AI 分析后回填。回填每题前先 SelPart 切到该题所属 Part（服务端保存要求 Part 可见且 curPartNum 已更新；停在 Part 1 回填 Part 3 翻译题会"绿了但不保存"）。
+// @version      3.12-exam-fill
+// @description  适配 wetest.sflep.com：以 .test_hov 为题容器提取全卷（选择+填空+翻译），AI 分析后回填。用 unsafeWindow(pageWin)访问平台真实变量(paperAnswer/autoSaveData等)——脚本因@grant运行在沙箱，window≠页面window，之前paperAnswer不存在导致翻译题保存失败。
 // @match        https://wetest.sflep.com/test/welearnTest.html*
 // @match        https://wetest.sflep.com/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_deleteValue
+// @grant        unsafeWindow
 // @connect      api.deepseek.com
 // @connect      *
 // @run-at       document-idle
@@ -17,10 +18,16 @@
 (function () {
     'use strict';
 
+    // 关键：脚本用了 @grant GM_*，运行在 Tampermonkey 沙箱里，window 不是页面的真实 window。
+    // 平台变量（paperAnswer / autoSaveAnswer / autoSaveData / curPartNum / isLeave / testEnv 等）
+    // 都挂在页面真实 window 上，沙箱 window 访问不到 → 之前 "paperAnswer不存在" 就是这个原因。
+    // 用 unsafeWindow 访问页面真实 window。
+    const pageWin = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+
     const APP = Object.freeze({
         id: 'wl-exam-fill-helper',
         name: 'WeLearn 试卷分析与自动回填助手',
-        version: '3.11-exam-fill',
+        version: '3.12-exam-fill',
         settingsKey: 'WL_EXAM_SETTINGS',
         apiKeyKey: 'WL_EXAM_API_KEY',
         autoFillKey: 'WL_EXAM_AUTOFILL'
@@ -90,16 +97,16 @@
             if (suppress) {
                 // 首次进入：保存原 onblur（可能为 null），然后摘除，防止它中途把 isLeave 设回 true
                 if (!hasSavedOnBlur) {
-                    savedOnBlur = window.onblur;
+                    savedOnBlur = pageWin.onblur;
                     hasSavedOnBlur = true;
                 }
-                window.onblur = null;
+                pageWin.onblur = null;
                 // 直接赋值 false（isLeave 是 var 全局变量，configurable:false，不可 defineProperty）
-                window.isLeave = false;
+                pageWin.isLeave = false;
             } else {
-                window.isLeave = false;
+                pageWin.isLeave = false;
                 if (hasSavedOnBlur) {
-                    window.onblur = savedOnBlur;
+                    pageWin.onblur = savedOnBlur;
                     hasSavedOnBlur = false;
                     savedOnBlur = null;
                 }
@@ -129,7 +136,7 @@
             if (nodeName === 'radio') {
                 value = el.dataset.id || '';
             } else {
-                if (window.jQuery) value = window.jQuery('#' + el.id).val() || '';
+                if (pageWin.jQuery) value = pageWin.jQuery('#' + el.id).val() || '';
                 else value = el.value || '';
                 if (el.dataset && el.dataset.select) value = el.dataset.select + ',' + value;
             }
@@ -144,12 +151,12 @@
                 }
             }
             if (pNum === undefined || pNum === null || isNaN(pNum)) {
-                pNum = window.curPartNum || 0;
+                pNum = pageWin.curPartNum || 0;
             }
 
             // 写 paperAnswer（与平台一致）
-            if (window.paperAnswer) {
-                window.paperAnswer[qnum] = { key: qnum, value: encodeURIComponent(value), type: 'question' };
+            if (pageWin.paperAnswer) {
+                pageWin.paperAnswer[qnum] = { key: qnum, value: encodeURIComponent(value), type: 'question' };
             }
 
             // 变绿 / 取消变绿
@@ -160,9 +167,9 @@
             }
 
             // 触发服务端保存（与 autoSaveAnswer 调用 autoSaveData 一致，但用正确 partNum）
-            if (typeof window.autoSaveData === 'function') {
-                window.autoSaveData({
-                    testId: window.testEnv && window.testEnv.testId,
+            if (typeof pageWin.autoSaveData === 'function') {
+                pageWin.autoSaveData({
+                    testId: pageWin.testEnv && pageWin.testEnv.testId,
                     partNum: pNum,
                     answerDetail: {
                         key: qnum,
@@ -186,9 +193,9 @@
             const wasFilling = fillingBatch;
             suppressIsLeave(true);
             try {
-                if (qtype === 'bankedCloze' && typeof window.CheckBankedClozeInput === 'function') {
+                if (qtype === 'bankedCloze' && typeof pageWin.CheckBankedClozeInput === 'function') {
                     // bankedCloze 必须先校验（会清空非法输入并转大写），再 directSave
-                    window.CheckBankedClozeInput({ target: el });
+                    pageWin.CheckBankedClozeInput({ target: el });
                     directSaveAnswer(el, partNum);
                 } else {
                     // 优先直接保存，绕开 isLeave（免疫 await sleep 期间的时序问题）
@@ -206,8 +213,8 @@
     // "绿了但不保存"——必须真正 SelPart 切过去。SelPart 内部会更新 curPartNum、hide/show。
     function ensurePart(partNum) {
         try {
-            if (partNum && typeof window.SelPart === 'function' && window.curPartNum !== partNum) {
-                window.SelPart(partNum);
+            if (partNum && typeof pageWin.SelPart === 'function' && pageWin.curPartNum !== partNum) {
+                pageWin.SelPart(partNum);
             }
         } catch (_) { /* ignore */ }
     }
@@ -250,8 +257,8 @@
 
         // 4) 同步字数统计：优先用平台自带函数，保证与平台口径一致
         try {
-            if (typeof window.StatWritingWordsCount === 'function' && el.id) {
-                window.StatWritingWordsCount(el.id, true);
+            if (typeof pageWin.StatWritingWordsCount === 'function' && el.id) {
+                pageWin.StatWritingWordsCount(el.id, true);
             } else {
                 const rawId = (el.id || '').replace(/^ta_/, '');
                 if (rawId) {
@@ -265,7 +272,7 @@
         } catch (_) { /* ignore */ }
 
         // 5) 调用前再确保一次 isLeave=false（防止 1-4 步中间被设回 true）
-        window.isLeave = false;
+        pageWin.isLeave = false;
 
         // 6) 核心：直接保存（绕开 isLeave + 用题目所属 partNum）
         //    会同步为 #aQuestion<qnum> 加 answer_sheet_2，写 paperAnswer 并 POST 保存。
@@ -538,7 +545,7 @@
 
                 // 记录该题所属 Part：平台用 #part<N> 作为 Part 容器，curPartNum 只在 SelPart 时更新，
                 // 回填时保存请求需带正确 partNum，否则服务端按 partNum 过滤会拒收（绿了但不保存）。
-                let partNum = window.curPartNum || 0;
+                let partNum = pageWin.curPartNum || 0;
                 const partDiv = hov.closest('.partDiv');
                 if (partDiv && partDiv.id) {
                     const m = partDiv.id.match(/(\d+)/);
