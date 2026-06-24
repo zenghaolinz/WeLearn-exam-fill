@@ -34,8 +34,7 @@
 
 ### 关于默认模型
 
-脚本默认模型填 `deepseek-v4-flash`。注意：DeepSeek 官方目前公开的模型名为 `deepseek-chat`、`deepseek-reasoner`；`deepseek-v4-flash` 为用户指定值。如果"测试连接"报 404（模型不存在），请在面板把 Model 改回 `deepseek-chat` 即可。
-
+脚本默认模型填 `deepseek-v4-flash`。
 ## 技术说明
 
 ### 为什么自己写保存逻辑，而不是直接填 value？
