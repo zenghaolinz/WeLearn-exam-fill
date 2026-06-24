@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         WeLearn 试卷分析与自动回填助手
 // @namespace    http://tampermonkey.net/
-// @version      3.9-exam-fill
-// @description  适配 wetest.sflep.com：以 .test_hov 为题容器提取全卷（选择+填空+翻译），AI 分析后回填。新增 directSaveAnswer 直接复刻 autoSaveAnswer 变绿+存档逻辑，完全绕开 isLeave 检查，稳定触发答题卡变绿与服务端保存。默认模型 deepseek-v4-flash。
+// @version      3.10-exam-fill
+// @description  适配 wetest.sflep.com：以 .test_hov 为题容器提取全卷（选择+填空+翻译），AI 分析后回填。directSaveAnswer 绕开 isLeave 拦截 + 用题目所属 partNum 保存（修"绿了但不保存、刷新就没了"：服务端按 partNum 归档，翻译题在 Part 3 但 curPartNum=1 时请求被拒收）。
 // @match        https://wetest.sflep.com/test/welearnTest.html*
 // @match        https://wetest.sflep.com/*
 // @grant        GM_xmlhttpRequest
@@ -20,7 +20,7 @@
     const APP = Object.freeze({
         id: 'wl-exam-fill-helper',
         name: 'WeLearn 试卷分析与自动回填助手',
-        version: '3.9-exam-fill',
+        version: '3.10-exam-fill',
         settingsKey: 'WL_EXAM_SETTINGS',
         apiKeyKey: 'WL_EXAM_API_KEY',
         autoFillKey: 'WL_EXAM_AUTOFILL'
@@ -51,7 +51,7 @@
     // 选择题回填：点击 .radio 触发平台原生选中逻辑，再确保 autoSaveAnswer 执行
     // （autoSaveAnswer 由 .choiceList 的 change 事件触发，但合成 change 不一定可靠
     //  走到 jQuery 监听器，因此直接调用一次作为兜底，已变绿则跳过避免重复保存）。
-    function fillChoice(radioDiv) {
+    function fillChoice(radioDiv, partNum) {
         if (!radioDiv) return false;
         const input = radioDiv.querySelector('input[type="radio"], input[type="checkbox"]');
         if (input) {
@@ -61,12 +61,12 @@
         }
         radioDiv.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
 
-        // 兜底：若答题卡仍未变绿，直接保存（directSaveAnswer 绕开 isLeave）
+        // 兜底：若答题卡仍未变绿，直接保存（directSaveAnswer 绕开 isLeave + 用 partNum）
         if (input && input.dataset && input.dataset.qnum) {
             const qnum = input.dataset.qnum;
             const sheetItem = document.getElementById('aQuestion' + qnum);
             if (sheetItem && !sheetItem.classList.contains('answer_sheet_2')) {
-                triggerPlatformSave(input);
+                triggerPlatformSave(input, partNum);
             }
         }
         return true;
@@ -113,7 +113,12 @@
     // 真实 window blur 仍可能把 isLeave 设回 true，导致后续题失败。
     // 此函数直接操作 paperAnswer / .answer_sheet_2 / autoSaveData，
     // 不读 isLeave，免疫一切时序问题。
-    function directSaveAnswer(el) {
+    //
+    // partNum 关键：保存请求的 partNum 必须是题目所属 Part，而不是当前显示的 curPartNum。
+    // 平台服务端按 partNum 归档答案；若翻译题在 Part 3 但 curPartNum=1，
+    // 请求带 partNum=1 会被拒收/归错 → "绿了但不保存，刷新就没了"。
+    // partNum 解析优先级：传入参数 > 元素所在 .partDiv 的 id > curPartNum。
+    function directSaveAnswer(el, partNum) {
         try {
             const qnum = el.dataset && el.dataset.qnum;
             if (!qnum || isNaN(qnum) || parseInt(qnum, 10) <= 0) return false;
@@ -129,6 +134,19 @@
                 if (el.dataset && el.dataset.select) value = el.dataset.select + ',' + value;
             }
 
+            // 解析正确的 partNum
+            let pNum = partNum;
+            if (pNum === undefined || pNum === null || isNaN(pNum)) {
+                const partDiv = el.closest('.partDiv');
+                if (partDiv && partDiv.id) {
+                    const m = partDiv.id.match(/(\d+)/);
+                    if (m) pNum = parseInt(m[1], 10);
+                }
+            }
+            if (pNum === undefined || pNum === null || isNaN(pNum)) {
+                pNum = window.curPartNum || 0;
+            }
+
             // 写 paperAnswer（与平台一致）
             if (window.paperAnswer) {
                 window.paperAnswer[qnum] = { key: qnum, value: encodeURIComponent(value), type: 'question' };
@@ -141,11 +159,11 @@
                 else cell.classList.add('answer_sheet_2');
             }
 
-            // 触发服务端保存（与 autoSaveAnswer 调用 autoSaveData 一致）
+            // 触发服务端保存（与 autoSaveAnswer 调用 autoSaveData 一致，但用正确 partNum）
             if (typeof window.autoSaveData === 'function') {
                 window.autoSaveData({
                     testId: window.testEnv && window.testEnv.testId,
-                    partNum: window.curPartNum,
+                    partNum: pNum,
                     answerDetail: {
                         key: qnum,
                         value: encodeURIComponent(value),
@@ -162,7 +180,7 @@
     // 优先用 directSaveAnswer（完全不碰 isLeave，免疫时序）；
     // bankedCloze 仍需 CheckBankedClozeInput（校验+大写）；
     // 其余兜底走 autoSaveAnswer（每题重新 suppressIsLeave 防中途失守）。
-    function triggerPlatformSave(el) {
+    function triggerPlatformSave(el, partNum) {
         try {
             const qtype = el.dataset && el.dataset.qtype;
             const wasFilling = fillingBatch;
@@ -171,10 +189,10 @@
                 if (qtype === 'bankedCloze' && typeof window.CheckBankedClozeInput === 'function') {
                     // bankedCloze 必须先校验（会清空非法输入并转大写），再 directSave
                     window.CheckBankedClozeInput({ target: el });
-                    directSaveAnswer(el);
+                    directSaveAnswer(el, partNum);
                 } else {
                     // 优先直接保存，绕开 isLeave（免疫 await sleep 期间的时序问题）
-                    directSaveAnswer(el);
+                    directSaveAnswer(el, partNum);
                 }
             } finally {
                 if (!wasFilling) suppressIsLeave(false);
@@ -183,10 +201,11 @@
     }
 
     // 填空/翻译回填：async，逐题延时。
-    // 关键：写入 value 后直接调用平台 autoSaveAnswer（绑在 blur 上），
+    // 关键：写入 value 后直接调用 directSaveAnswer（绕开 isLeave + 用正确 partNum），
     // 不再依赖 execCommand / 合成事件链 —— 平台并不检查 isTrusted，
-    // 答题卡变绿与保存完全由 autoSaveAnswer 驱动。
-    async function fillText(el, value) {
+    // 答题卡变绿与保存完全由保存逻辑驱动。
+    // partNum：题目所属 Part，保存请求需带它，否则服务端按 partNum 过滤会拒收。
+    async function fillText(el, value, partNum) {
         if (!el) return false;
         const val = String(value ?? '');
         if (!val) return false;
@@ -236,9 +255,9 @@
         // 5) 调用前再确保一次 isLeave=false（防止 1-4 步中间被设回 true）
         window.isLeave = false;
 
-        // 6) 核心：直接调用平台 autoSaveAnswer（等价于真实 blur 触发的保存链路）
-        //    它会同步为 #aQuestion<qnum> 加 answer_sheet_2，并把答案写入 paperAnswer 并 POST 保存。
-        triggerPlatformSave(el);
+        // 6) 核心：直接保存（绕开 isLeave + 用题目所属 partNum）
+        //    会同步为 #aQuestion<qnum> 加 answer_sheet_2，写 paperAnswer 并 POST 保存。
+        triggerPlatformSave(el, partNum);
 
         // 7) 失焦收尾
         await sleep(20);
@@ -505,6 +524,15 @@
                 const noEl = hov.querySelector('[data-qnum]');
                 const no = noEl ? String(noEl.getAttribute('data-qnum')) : (normalizeText(hov.querySelector('.test_number')?.textContent || '').match(/\d+/)?.[0] || '');
 
+                // 记录该题所属 Part：平台用 #part<N> 作为 Part 容器，curPartNum 只在 SelPart 时更新，
+                // 回填时保存请求需带正确 partNum，否则服务端按 partNum 过滤会拒收（绿了但不保存）。
+                let partNum = window.curPartNum || 0;
+                const partDiv = hov.closest('.partDiv');
+                if (partDiv && partDiv.id) {
+                    const m = partDiv.id.match(/(\d+)/);
+                    if (m) partNum = parseInt(m[1], 10);
+                }
+
                 const clone = hov.cloneNode(true);
                 clone.querySelectorAll('.choiceList, input, textarea').forEach(e => e.remove());
                 const stem = normalizeText(clone.innerText || clone.textContent || '');
@@ -518,10 +546,10 @@
                     const optionEls = Array.from(choiceList.querySelectorAll('.radio')).filter(el => el);
                     const options = optionEls.map(el => normalizeText(el.innerText || el.textContent));
                     if (options.length) {
-                        questions.push({ type: 'choice', no, stem, options, optionEls, passage });
+                        questions.push({ type: 'choice', no, stem, options, optionEls, passage, partNum });
                     }
                 } else if (textInput) {
-                    questions.push({ type: 'text', no, stem, inputEl: textInput, isTranslate: textInput.tagName === 'TEXTAREA', passage });
+                    questions.push({ type: 'text', no, stem, inputEl: textInput, isTranslate: textInput.tagName === 'TEXTAREA', passage, partNum });
                 }
             }
 
@@ -598,7 +626,7 @@
                     const optText = q.options[a.answer_index] || '';
                     summary.push(`题${q.no} [选择] → ${optText}${a.reason ? `  (${a.reason})` : ''}`);
                     if (this.autoFillEnabled) {
-                        fillChoice(q.optionEls[a.answer_index]);
+                        fillChoice(q.optionEls[a.answer_index], q.partNum);
                         filledChoice++;
                     }
                 } else {
@@ -623,7 +651,7 @@
                             summary.push(`题${q.no} [填空] → ${ans || 'AI 未给出'}`);
                             if (this.autoFillEnabled && ans) {
                                 this.ui.setStatus(`回填填空题 ${i + 1}/${pendingFill.length}（题${q.no}）...`, true);
-                                await fillText(q.inputEl, ans);   // 直接调用平台 autoSaveAnswer
+                                await fillText(q.inputEl, ans, q.partNum);   // 带题目所属 partNum 保存
                                 await sleep(220);                  // 题间延时，让保存请求排队
                                 filledFill++;
                             }
@@ -650,7 +678,7 @@
                             summary.push(`题${q.no} [翻译] → ${ans.slice(0, 50)}${ans.length > 50 ? '...' : ''}`);
                             if (this.autoFillEnabled && ans) {
                                 this.ui.setStatus(`回填翻译题 ${i + 1}/${pendingTrans.length}（题${q.no}）...`, true);
-                                await fillText(q.inputEl, ans);
+                                await fillText(q.inputEl, ans, q.partNum);
                                 await sleep(280);
                                 filledTrans++;
                             }

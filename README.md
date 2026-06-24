@@ -2,7 +2,7 @@
 
 一个适配 [WE Test 智能测试系统](https://wetest.sflep.com/test/welearnTest.html)（wetest.sflep.com）的 Tampermonkey 油猴脚本。自动提取全卷题目（选择 + 填空 + 翻译），调用 AI 分析作答后回填，并稳定触发答题卡变绿与服务端保存。**不会自动提交**，请核对后自行交卷。
 
-当前版本：`3.9-exam-fill`
+当前版本：`3.10-exam-fill`
 
 ## 功能特性
 
@@ -18,7 +18,7 @@
 ## 安装
 
 1. 安装 [Tampermonkey](https://www.tampermonkey.net/)（Chrome / Edge / Firefox 均可）。
-2. 新建脚本，将 `WeLearn-exam-fill-3.4.user.js` 的全部内容粘贴进去，保存。
+2. 新建脚本，将 `WeLearn-exam-fill-3.10.user.js` 的全部内容粘贴进去，保存。
    - **重要**：请用文本编辑器（VSCode / 记事本）打开文件后 `Ctrl+A` 全选复制，**不要从网页预览框复制**——预览框会插入"预览已截断"占位文本，导致脚本语法错误无法加载。
 3. 打开试卷页 `https://wetest.sflep.com/test/welearnTest.html*`，右上角出现悬浮面板即安装成功。
 
@@ -57,12 +57,15 @@ $('textarea:not([id="txtLogInfo"])').each(function(){
 | 合成 `blur` 事件走不进 jQuery 1.11 监听器 | 填了 value 但题号不变绿 | 直接调用平台函数，不依赖合成事件 |
 | `autoSaveAnswer` 第一行 `if(isLeave) return` | 自动化期间窗口失焦，`isLeave=true`，保存被静默吞掉 | 见下 |
 | `isLeave` 是顶层 `var` 全局变量，`configurable:false` | `Object.defineProperty` 重定义会抛 `Cannot redefine property` | 用赋值法 `window.isLeave=false` |
+| 保存请求的 `partNum` 取全局 `curPartNum`，而非题目所属 Part | "绿了但没保存，刷新就没了"；切到对应 Part 再回填才成功 | `directSaveAnswer` 用题目所属 Part 号保存 |
 
 ### 最终方案：`directSaveAnswer`
 
 即便用赋值法 + 临时摘除 `window.onblur`，async 的 `await sleep()` 会让出主线程，期间真实 blur 仍可能把 `isLeave` 设回 true，导致批量回填时"只绿第一道、后面被吞"。
 
-**釜底抽薪**：新增 `directSaveAnswer(el)`，直接复刻 `autoSaveAnswer` 的变绿 + 存档核心逻辑（写 `paperAnswer` → 加 `answer_sheet_2` → 调 `autoSaveData` POST），**完全不读 `isLeave`**，免疫一切时序问题。`triggerPlatformSave` 优先走它，`bankedCloze` 类型先过 `CheckBankedClozeInput` 校验再保存。
+**釜底抽薪**：新增 `directSaveAnswer(el, partNum)`，直接复刻 `autoSaveAnswer` 的变绿 + 存档核心逻辑（写 `paperAnswer` → 加 `answer_sheet_2` → 调 `autoSaveData` POST），**完全不读 `isLeave`**，免疫一切时序问题。`triggerPlatformSave` 优先走它，`bankedCloze` 类型先过 `CheckBankedClozeInput` 校验再保存。
+
+**partNum 修复**：`directSaveAnswer` 的保存请求用题目所属 Part 号（`collectAllQuestions` 时从 `.partDiv` 容器 id 解析记录），而非全局 `curPartNum`。平台服务端按 `partNum` 归档答案——若翻译题在 Part 3 但 `curPartNum=1`，请求带 `partNum=1` 会被拒收，表现为"前端变绿但服务端没存，刷新就没了"。用题目自身 Part 号后即稳定保存。
 
 实测：手动同步连调多道翻译题可全部变绿；脚本批量回填经 `directSaveAnswer` 后翻译题不再"每次只绿一道"。
 
@@ -70,7 +73,7 @@ $('textarea:not([id="txtLogInfo"])').each(function(){
 
 ```
 WeLearnScripts/
-├── WeLearn-exam-fill-3.4.user.js   # 主脚本（内容为 3.9 版）
+├── WeLearn-exam-fill-3.10.user.js   # 主脚本
 └── README.md
 ```
 
